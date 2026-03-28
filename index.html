@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小朋友下樓梯 - NS-Shaft Clone</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        <div id="hud">
+            <div id="hp-container">
+                <div id="hp-bar"></div>
+            </div>
+            <div id="floor-count">Floors: 0</div>
+        </div>
+        <div id="game-over" class="hidden">
+            <h1>Game Over</h1>
+            <p>最終得分: <span id="final-score">0</span> 層</p>
+            <button id="restart-btn">重新開始</button>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
