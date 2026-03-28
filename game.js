@@ -1,396 +1,470 @@
 /**
- * 小朋友下樓梯 (NS-Shaft Clone)
- * Game Logic
+ * NS-Shaft Clone - Action Version
+ * Core Game Logic
  */
 
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const hpBarFill = document.getElementById('hp-bar-fill');
+const floorText = document.getElementById('floor-count');
+const startScreen = document.getElementById('start-screen');
+const gameOverScreen = document.getElementById('game-over');
+const finalScoreText = document.getElementById('final-score');
+const startBtn = document.getElementById('start-btn');
+const restartBtn = document.getElementById('restart-btn');
+
+// --- Configuration ---
 const CONFIG = {
-    CANVAS_WIDTH: 400,
-    CANVAS_HEIGHT: 600,
-    GRAVITY: 0.5,
-    FRICTION: 0.8,
-    MOVE_SPEED: 5,
-    INITIAL_SCROLL_SPEED: 1.5,
-    MAX_SCROLL_SPEED: 4,
-    SCROLL_ACCELERATION: 0.0001,
-    PLAYER_WIDTH: 30,
-    PLAYER_HEIGHT: 30,
-    PLATFORM_WIDTH: 80,
-    PLATFORM_HEIGHT: 15,
-    MAX_HP: 100,
-    HEAL_AMOUNT: 0.2,
-    SPIKE_DAMAGE: 15,
-    CEILING_DAMAGE: 10,
-    FALL_DAMAGE: 100,
-    PLATFORM_SPACING: 100,
-    TYPES: {
-        NORMAL: 'normal',
-        SPIKE: 'spike',
-        SPRING: 'spring',
-        CONVEYOR_LEFT: 'conveyor-left',
-        CONVEYOR_RIGHT: 'conveyor-right',
-        FRAGILE: 'fragile'
-    }
+    canvasWidth: 400,
+    canvasHeight: 600,
+    gravity: 0.35,
+    jumpForce: -8,
+    moveSpeed: 5,
+    friction: 0.8,
+    scrollSpeed: 1.5,
+    maxHp: 100,
+    topSpikesHeight: 30,
+    platformWidth: 80,
+    platformHeight: 15,
+    spawnDistance: 100
 };
 
+canvas.width = CONFIG.canvasWidth;
+canvas.height = CONFIG.canvasHeight;
+
+// --- State ---
+let gameState = 'START'; // START, PLAYING, GAMEOVER
+let score = 1;
+let hp = CONFIG.maxHp;
+let platforms = [];
+let enemies = [];
+let projectiles = [];
+let keys = {};
+let lastPlatformY = CONFIG.canvasHeight - 50;
+
+// --- Classes ---
+
 class Player {
-    constructor(game) {
-        this.game = game;
+    constructor() {
+        this.width = 24;
+        this.height = 32;
         this.reset();
     }
 
     reset() {
-        this.x = CONFIG.CANVAS_WIDTH / 2 - CONFIG.PLAYER_WIDTH / 2;
+        this.x = CONFIG.canvasWidth / 2 - this.width / 2;
         this.y = 100;
         this.vx = 0;
         this.vy = 0;
-        this.hp = CONFIG.MAX_HP;
-        this.onPlatform = null;
-        this.width = CONFIG.PLAYER_WIDTH;
-        this.height = CONFIG.PLAYER_HEIGHT;
+        this.onPlatform = false;
+        this.canTakeDamage = true;
+        this.invincibilityFrames = 0;
     }
 
     update() {
         // Horizontal movement
-        if (this.game.keys['ArrowLeft']) {
-            this.vx -= 1;
-        } else if (this.game.keys['ArrowRight']) {
-            this.vx += 1;
-        } else {
-            this.vx *= CONFIG.FRICTION;
-        }
+        if (keys['ArrowLeft']) this.vx -= 0.8;
+        if (keys['ArrowRight']) this.vx += 0.8;
+        this.vx *= CONFIG.friction;
 
-        // Limit velocity
-        if (Math.abs(this.vx) > CONFIG.MOVE_SPEED) {
-            this.vx = Math.sign(this.vx) * CONFIG.MOVE_SPEED;
-        }
-
+        // Apply velocities
         this.x += this.vx;
+        this.y += this.vy;
+
+        // Gravity
+        this.vy += CONFIG.gravity;
 
         // Screen boundaries
         if (this.x < 0) this.x = 0;
-        if (this.x + this.width > CONFIG.CANVAS_WIDTH) {
-            this.x = CONFIG.CANVAS_WIDTH - this.width;
+        if (this.x + this.width > CONFIG.canvasWidth) this.x = CONFIG.canvasWidth - this.width;
+
+        // Top Spikes Damage
+        if (this.y < CONFIG.topSpikesHeight) {
+            this.takeDamage(10);
+            this.vy = 2; // Bounce down
         }
 
-        // Vertical movement
-        this.vy += CONFIG.GRAVITY;
-        this.y += this.vy;
-
-        // Check if on a platform
-        let landed = false;
-        const prevPlatform = this.onPlatform;
-
-        if (this.vy >= 0) {
-            for (const platform of this.game.platforms) {
-                if (this.x + this.width > platform.x &&
-                    this.x < platform.x + platform.width &&
-                    this.y + this.height >= platform.y &&
-                    this.y + this.height <= platform.y + platform.height + this.vy) {
-                    
-                    this.y = platform.y - this.height;
-                    this.vy = 0;
-                    this.onPlatform = platform;
-                    landed = true;
-                    
-                    if (prevPlatform !== platform) {
-                        platform.onStepped(this, true);
-                    } else {
-                        platform.onStepped(this, false);
-                    }
-                    break;
-                }
-            }
+        // Falling off bottom
+        if (this.y > CONFIG.canvasHeight) {
+            this.takeDamage(100); // Instant death or heavy damage
         }
 
-        if (!landed) {
-            this.onPlatform = null;
-        }
-
-        // Ceiling collision
-        if (this.y <= 0) {
-            this.y = 0;
-            this.vy = 0;
-            this.takeDamage(CONFIG.CEILING_DAMAGE / 60); // damage per frame while touching
-        }
-
-        // Bottom collision
-        if (this.y + this.height > CONFIG.CANVAS_HEIGHT) {
-            this.takeDamage(CONFIG.FALL_DAMAGE);
-        }
-
-        // Healing on normal platforms (if desired by spec or traditional)
-        if (this.onPlatform && this.onPlatform.type === CONFIG.TYPES.NORMAL) {
-            this.heal(CONFIG.HEAL_AMOUNT);
+        if (this.invincibilityFrames > 0) {
+            this.invincibilityFrames--;
         }
     }
 
     takeDamage(amount) {
-        this.hp -= amount;
-        if (this.hp < 0) this.hp = 0;
-    }
-
-    heal(amount) {
-        this.hp += amount;
-        if (this.hp > CONFIG.MAX_HP) this.hp = CONFIG.MAX_HP;
-    }
-
-    draw(ctx) {
-        ctx.fillStyle = '#42a5f5'; // Light blue
-        ctx.fillRect(this.x, this.y, this.width, this.height);
-        
-        // Eyes for the "child"
-        ctx.fillStyle = 'white';
-        ctx.fillRect(this.x + 5, this.y + 5, 5, 5);
-        ctx.fillRect(this.x + 20, this.y + 5, 5, 5);
-    }
-}
-
-class Platform {
-    constructor(x, y, type) {
-        this.x = x;
-        this.y = y;
-        this.width = CONFIG.PLATFORM_WIDTH;
-        this.height = CONFIG.PLATFORM_HEIGHT;
-        this.type = type;
-        this.active = true;
-        this.fragileTimer = 0;
-    }
-
-    update(scrollSpeed) {
-        this.y -= scrollSpeed;
-        if (this.y + this.height < 0) {
-            this.active = false;
-        }
-
-        if (this.type === CONFIG.TYPES.FRAGILE && this.fragileTimer > 0) {
-            this.fragileTimer--;
-            if (this.fragileTimer <= 0) {
-                this.active = false;
-            }
-        }
-    }
-
-    onStepped(player, isFirstStep) {
-        switch (this.type) {
-            case CONFIG.TYPES.SPIKE:
-                if (isFirstStep) {
-                    player.takeDamage(CONFIG.SPIKE_DAMAGE);
-                }
-                break;
-            case CONFIG.TYPES.SPRING:
-                if (isFirstStep) {
-                    player.vy = -12;
-                    player.onPlatform = null;
-                }
-                break;
-            case CONFIG.TYPES.CONVEYOR_LEFT:
-                player.x -= 2;
-                break;
-            case CONFIG.TYPES.CONVEYOR_RIGHT:
-                player.x += 2;
-                break;
-            case CONFIG.TYPES.FRAGILE:
-                if (isFirstStep && this.fragileTimer === 0) {
-                    this.fragileTimer = 30; // 0.5s at 60fps
-                }
-                break;
-        }
-    }
-
-    draw(ctx) {
-        switch (this.type) {
-            case CONFIG.TYPES.NORMAL:
-                ctx.fillStyle = '#bdbdbd';
-                break;
-            case CONFIG.TYPES.SPIKE:
-                ctx.fillStyle = '#ef5350'; // Red
-                break;
-            case CONFIG.TYPES.SPRING:
-                ctx.fillStyle = '#66bb6a'; // Green
-                break;
-            case CONFIG.TYPES.CONVEYOR_LEFT:
-            case CONFIG.TYPES.CONVEYOR_RIGHT:
-                ctx.fillStyle = '#ffa726'; // Orange
-                break;
-            case CONFIG.TYPES.FRAGILE:
-                ctx.fillStyle = '#ab47bc'; // Purple
-                if (this.fragileTimer > 0) {
-                    ctx.globalAlpha = this.fragileTimer / 30;
-                }
-                break;
-        }
-        ctx.fillRect(this.x, this.y, this.width, this.height);
-        
-        // Add spike visual
-        if (this.type === CONFIG.TYPES.SPIKE) {
-            ctx.fillStyle = '#b71c1c';
-            for (let i = 0; i < this.width; i += 10) {
-                ctx.beginPath();
-                ctx.moveTo(this.x + i, this.y);
-                ctx.lineTo(this.x + i + 5, this.y - 5);
-                ctx.lineTo(this.x + i + 10, this.y);
-                ctx.fill();
-            }
-        }
-
-        // Add conveyor arrows
-        if (this.type === CONFIG.TYPES.CONVEYOR_LEFT || this.type === CONFIG.TYPES.CONVEYOR_RIGHT) {
-            ctx.fillStyle = 'white';
-            ctx.font = '10px Arial';
-            const arrow = this.type === CONFIG.TYPES.CONVEYOR_LEFT ? '<<<<' : '>>>>';
-            ctx.fillText(arrow, this.x + 5, this.y + 12);
-        }
-
-        ctx.globalAlpha = 1.0;
-    }
-}
-
-class Game {
-    constructor() {
-        this.canvas = document.getElementById('game-canvas');
-        this.ctx = this.canvas.getContext('2d');
-        this.canvas.width = CONFIG.CANVAS_WIDTH;
-        this.canvas.height = CONFIG.CANVAS_HEIGHT;
-
-        this.hpBar = document.getElementById('hp-bar');
-        this.floorCountElement = document.getElementById('floor-count');
-        this.gameOverScreen = document.getElementById('game-over');
-        this.finalScoreElement = document.getElementById('final-score');
-        this.restartBtn = document.getElementById('restart-btn');
-
-        this.player = new Player(this);
-        this.platforms = [];
-        this.keys = {};
-        this.floorCount = 0;
-        this.scrollSpeed = CONFIG.INITIAL_SCROLL_SPEED;
-        this.lastPlatformY = 0;
-        this.isRunning = false;
-
-        this.setupInput();
-        this.restartBtn.addEventListener('click', () => this.start());
-        
-        this.start();
-    }
-
-    setupInput() {
-        window.addEventListener('keydown', (e) => this.keys[e.code] = true);
-        window.addEventListener('keyup', (e) => this.keys[e.code] = false);
-    }
-
-    start() {
-        this.player.reset();
-        this.platforms = [];
-        this.floorCount = 0;
-        this.scrollSpeed = CONFIG.INITIAL_SCROLL_SPEED;
-        this.isRunning = true;
-        this.gameOverScreen.classList.add('hidden');
-
-        // Initial platforms
-        this.lastPlatformY = 200;
-        this.platforms.push(new Platform(CONFIG.CANVAS_WIDTH / 2 - CONFIG.PLATFORM_WIDTH / 2, 200, CONFIG.TYPES.NORMAL));
-        
-        while (this.lastPlatformY < CONFIG.CANVAS_HEIGHT + 100) {
-            this.generatePlatform();
-        }
-
-        requestAnimationFrame(() => this.loop());
-    }
-
-    generatePlatform() {
-        const x = Math.random() * (CONFIG.CANVAS_WIDTH - CONFIG.PLATFORM_WIDTH);
-        const y = this.lastPlatformY + CONFIG.PLATFORM_SPACING;
-        
-        const types = Object.values(CONFIG.TYPES);
-        // Weighted random: mostly normal
-        let type;
-        const rand = Math.random();
-        if (rand < 0.5) type = CONFIG.TYPES.NORMAL;
-        else if (rand < 0.65) type = CONFIG.TYPES.SPIKE;
-        else if (rand < 0.8) type = CONFIG.TYPES.SPRING;
-        else if (rand < 0.9) type = CONFIG.TYPES.CONVEYOR_LEFT;
-        else if (rand < 0.95) type = CONFIG.TYPES.CONVEYOR_RIGHT;
-        else type = CONFIG.TYPES.FRAGILE;
-
-        this.platforms.push(new Platform(x, y, type));
-        this.lastPlatformY = y;
-        this.floorCount++;
-    }
-
-    update() {
-        if (!this.isRunning) return;
-
-        this.scrollSpeed += CONFIG.SCROLL_ACCELERATION;
-        if (this.scrollSpeed > CONFIG.MAX_SCROLL_SPEED) {
-            this.scrollSpeed = CONFIG.MAX_SCROLL_SPEED;
-        }
-
-        this.player.update();
-
-        // Update platforms
-        for (let i = this.platforms.length - 1; i >= 0; i--) {
-            this.platforms[i].update(this.scrollSpeed);
-            if (!this.platforms[i].active) {
-                this.platforms.splice(i, 1);
-            }
-        }
-        this.lastPlatformY -= this.scrollSpeed;
-
-        // Generate new platforms
-        if (this.lastPlatformY < CONFIG.CANVAS_HEIGHT) {
-            this.generatePlatform();
-        }
-
-        // Update UI
-        this.hpBar.style.width = `${this.player.hp}%`;
-        if (this.player.hp > 50) this.hpBar.style.backgroundColor = '#4caf50';
-        else if (this.player.hp > 20) this.hpBar.style.backgroundColor = '#ffeb3b';
-        else this.hpBar.style.backgroundColor = '#f44336';
-
-        this.floorCountElement.innerText = `Floors: ${Math.floor(this.floorCount)}`;
-
-        // Check game over
-        if (this.player.hp <= 0) {
-            this.endGame();
+        if (this.invincibilityFrames > 0) return;
+        hp -= amount;
+        this.invincibilityFrames = 30; // 0.5 sec at 60fps
+        if (hp <= 0) {
+            hp = 0;
+            endGame();
         }
     }
 
     draw() {
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
-        // Draw ceiling spikes
-        this.ctx.fillStyle = '#555';
-        this.ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 10);
-        this.ctx.fillStyle = '#9e9e9e';
-        for (let i = 0; i < CONFIG.CANVAS_WIDTH; i += 20) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(i, 10);
-            this.ctx.lineTo(i + 10, 25);
-            this.ctx.lineTo(i + 20, 10);
-            this.ctx.fill();
+        if (this.invincibilityFrames % 4 < 2) {
+            ctx.fillStyle = '#00ffcc';
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            // Simple eyes
+            ctx.fillStyle = '#000';
+            ctx.fillRect(this.x + 4, this.y + 6, 4, 4);
+            ctx.fillRect(this.x + 16, this.y + 6, 4, 4);
         }
-
-        // Draw platforms
-        for (const platform of this.platforms) {
-            platform.draw(this.ctx);
-        }
-
-        // Draw player
-        this.player.draw(this.ctx);
-    }
-
-    loop() {
-        if (!this.isRunning) return;
-        this.update();
-        this.draw();
-        requestAnimationFrame(() => this.loop());
-    }
-
-    endGame() {
-        this.isRunning = false;
-        this.finalScoreElement.innerText = this.floorCount;
-        this.gameOverScreen.classList.remove('hidden');
     }
 }
 
-// Start the game
-new Game();
+class Platform {
+    constructor(x, y, type = 'normal') {
+        this.x = x;
+        this.y = y;
+        this.width = CONFIG.platformWidth;
+        this.height = CONFIG.platformHeight;
+        this.type = type;
+        this.hasStepped = false;
+        this.breakTimer = 30; // For fragile platforms
+    }
+
+    update() {
+        this.y -= CONFIG.scrollSpeed;
+    }
+
+    draw() {
+        switch (this.type) {
+            case 'normal': ctx.fillStyle = '#555'; break;
+            case 'spike': ctx.fillStyle = '#ff3366'; break;
+            case 'spring': ctx.fillStyle = '#ffcc00'; break;
+            case 'conveyor-l': ctx.fillStyle = '#3399ff'; break;
+            case 'conveyor-r': ctx.fillStyle = '#3399ff'; break;
+            case 'fragile': ctx.fillStyle = '#aaaaaa'; break;
+        }
+
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+
+        // Visual details
+        if (this.type === 'spike') {
+            ctx.fillStyle = '#fff';
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(this.x + i * 16, this.y);
+                ctx.lineTo(this.x + i * 16 + 8, this.y - 8);
+                ctx.lineTo(this.x + i * 16 + 16, this.y);
+                ctx.fill();
+            }
+        } else if (this.type === 'spring') {
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(this.x + 10, this.y + 2, this.width - 20, this.height - 4);
+        } else if (this.type === 'conveyor-l' || this.type === 'conveyor-r') {
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            const offset = (Date.now() / 50) % 20;
+            for(let i=0; i<4; i++){
+                let iconX = this.type === 'conveyor-l' ? this.x + (i*20) - offset : this.x + (i*20) + offset;
+                if(iconX > this.x && iconX < this.x + this.width - 10){
+                    ctx.fillText(this.type === 'conveyor-l' ? '<' : '>', iconX, this.y + 12);
+                }
+            }
+        }
+    }
+}
+
+class Enemy {
+    constructor(platform, type) {
+        this.type = type;
+        this.width = 20;
+        this.height = 20;
+        this.platform = platform; // Turret is fixed to platform
+        this.shootTimer = Math.random() * 100;
+        
+        if (type === 'turret') {
+            this.x = platform.x + platform.width / 2 - this.width / 2;
+            this.y = platform.y - this.height;
+        } else if (type === 'sentry') {
+            this.x = Math.random() * (CONFIG.canvasWidth - this.width);
+            this.y = platform.y - 120; // Above platform
+            this.vx = 2;
+        }
+    }
+
+    update() {
+        if (this.type === 'turret') {
+            this.y = this.platform.y - this.height;
+            this.x = this.platform.x + this.platform.width / 2 - this.width / 2;
+        } else if (this.type === 'sentry') {
+            this.x += this.vx;
+            if (this.x < 0 || this.x + this.width > CONFIG.canvasWidth) this.vx *= -1;
+            // Float up slowly like platforms
+            this.y -= CONFIG.scrollSpeed;
+        }
+
+        // Shooting logic
+        this.shootTimer--;
+        if (this.shootTimer <= 0) {
+            this.shoot();
+            this.shootTimer = 100 + Math.random() * 100;
+        }
+    }
+
+    shoot() {
+        let angle;
+        if (this.type === 'turret') {
+            // Shoot towards player if nearby, else down
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            angle = Math.atan2(dy, dx);
+        } else {
+            angle = Math.PI / 2; // Straight down
+        }
+        
+        projectiles.push(new Projectile(this.x + this.width / 2, this.y + this.height / 2, angle));
+    }
+
+    draw() {
+        ctx.fillStyle = this.type === 'turret' ? '#ff6600' : '#purple';
+        if (this.type === 'turret') {
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(this.x + 5, this.y + 5, 10, 10);
+        } else {
+            // Draw sentry (diamond shape)
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.width / 2, this.y);
+            ctx.lineTo(this.x + this.width, this.y + this.height / 2);
+            ctx.lineTo(this.x + this.width / 2, this.y + this.height);
+            ctx.lineTo(this.x, this.y + this.height / 2);
+            ctx.closePath();
+            ctx.fill();
+        }
+    }
+}
+
+class Projectile {
+    constructor(x, y, angle) {
+        this.x = x;
+        this.y = y;
+        this.speed = 4;
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+        this.radius = 4;
+        this.bounces = 0;
+        this.maxBounces = 3;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // Bounce logic
+        if (this.x - this.radius < 0 || this.x + this.radius > CONFIG.canvasWidth) {
+            this.vx *= -1;
+            // Add random vertical offset as requested
+            this.vy += (Math.random() - 0.5) * 2;
+            this.bounces++;
+        }
+
+        // Projectile removal
+        if (this.y < 0 || this.y > CONFIG.canvasHeight || this.bounces > this.maxBounces) {
+            return false;
+        }
+
+        // Hit player
+        const dx = this.x - (player.x + player.width / 2);
+        const dy = this.y - (player.y + player.height / 2);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < this.radius + player.width / 2) {
+            player.takeDamage(5);
+            return false;
+        }
+
+        return true;
+    }
+
+    draw() {
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+        // Glow effect
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#ffff00';
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+}
+
+const player = new Player();
+
+// --- Game Logic ---
+
+function init() {
+    platforms = [];
+    enemies = [];
+    projectiles = [];
+    hp = CONFIG.maxHp;
+    score = 1;
+    lastPlatformY = CONFIG.canvasHeight - 50;
+    player.reset();
+    
+    // Initial platforms
+    for (let i = 0; i < 6; i++) {
+        spawnPlatform(CONFIG.canvasHeight - i * 100);
+    }
+    
+    requestAnimationFrame(gameLoop);
+}
+
+function spawnPlatform(y = null) {
+    const types = ['normal', 'normal', 'normal', 'spike', 'spring', 'conveyor-l', 'conveyor-r', 'fragile'];
+    const type = types[Math.floor(Math.random() * types.length)];
+    const x = Math.random() * (CONFIG.canvasWidth - CONFIG.platformWidth);
+    const spawnY = y !== null ? y : lastPlatformY + CONFIG.spawnDistance;
+    
+    const p = new Platform(x, spawnY, type);
+    platforms.push(p);
+    lastPlatformY = spawnY;
+
+    // Chance to spawn an enemy on or above this platform
+    if (Math.random() < 0.2) {
+        enemies.push(new Enemy(p, Math.random() > 0.5 ? 'turret' : 'sentry'));
+    }
+}
+
+function update() {
+    if (gameState !== 'PLAYING') return;
+
+    player.update();
+
+    // Platforms
+    for (let i = platforms.length - 1; i >= 0; i--) {
+        const p = platforms[i];
+        p.update();
+
+        // Collision logic
+        if (player.vy > 0 && 
+            player.x + player.width > p.x && 
+            player.x < p.x + p.width &&
+            player.y + player.height > p.y && 
+            player.y + player.height < p.y + p.height + player.vy) {
+            
+            // Land on platform
+            player.y = p.y - player.height;
+            player.vy = -CONFIG.scrollSpeed; // Move with platform
+
+            if (p.type === 'spike') {
+                player.takeDamage(5);
+            } else if (p.type === 'spring') {
+                player.vy = CONFIG.jumpForce;
+            } else if (p.type === 'conveyor-l') {
+                player.x -= 2;
+            } else if (p.type === 'conveyor-r') {
+                player.x += 2;
+            } else if (p.type === 'fragile') {
+                p.hasStepped = true;
+            }
+
+            // Scoring: count unique platforms descending
+            if (!p.hasStepped) {
+                p.hasStepped = true;
+                if (p.type !== 'fragile') {
+                    // Fragile managed separately
+                }
+            }
+        }
+
+        // Fragile disappearance
+        if (p.type === 'fragile' && p.hasStepped) {
+            p.breakTimer--;
+            if (p.breakTimer <= 0) {
+                platforms.splice(i, 1);
+                continue;
+            }
+        }
+
+        // Remove off-screen platforms and increment score
+        if (p.y < 0) {
+            platforms.splice(i, 1);
+            score++;
+            // Increase diff
+            CONFIG.scrollSpeed = 1.5 + (score / 50);
+        }
+    }
+
+    // Spawn new platforms
+    if (platforms[platforms.length - 1].y < CONFIG.canvasHeight - CONFIG.spawnDistance) {
+        spawnPlatform(CONFIG.canvasHeight);
+    }
+
+    // Enemies
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.update();
+        if (e.y < -50 || (e.platform && e.platform.y < -50)) {
+            enemies.splice(i, 1);
+        }
+    }
+
+    // Projectiles
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+        if (!projectiles[i].update()) {
+            projectiles.splice(i, 1);
+        }
+    }
+
+    // Update UI
+    hpBarFill.style.width = hp + '%';
+    floorText.textContent = score;
+}
+
+function draw() {
+    ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+
+    // Top spikes
+    ctx.fillStyle = '#555';
+    ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.topSpikesHeight);
+    ctx.fillStyle = '#ff3366';
+    for(let i=0; i<CONFIG.canvasWidth/20; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i*20, CONFIG.topSpikesHeight);
+        ctx.lineTo(i*20+10, CONFIG.topSpikesHeight + 15);
+        ctx.lineTo(i*20+20, CONFIG.topSpikesHeight);
+        ctx.fill();
+    }
+
+    platforms.forEach(p => p.draw());
+    enemies.forEach(e => e.draw());
+    projectiles.forEach(pr => pr.draw());
+    player.draw();
+}
+
+function gameLoop() {
+    update();
+    draw();
+    if (gameState === 'PLAYING') {
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+function endGame() {
+    gameState = 'GAMEOVER';
+    gameOverScreen.classList.remove('hidden');
+    finalScoreText.textContent = score;
+}
+
+// --- Inputs ---
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+startBtn.addEventListener('click', () => {
+    startScreen.classList.add('hidden');
+    gameState = 'PLAYING';
+    init();
+});
+
+restartBtn.addEventListener('click', () => {
+    gameOverScreen.classList.add('hidden');
+    gameState = 'PLAYING';
+    init();
+});

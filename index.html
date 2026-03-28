@@ -3,22 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>小朋友下樓梯 - NS-Shaft Clone</title>
+    <title>小朋友下樓梯 - 復刻動作版</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="game-container">
-        <canvas id="game-canvas"></canvas>
-        <div id="hud">
-            <div id="hp-container">
-                <div id="hp-bar"></div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-layer">
+            <div id="stats">
+                <div class="stat-item">
+                    <span class="label">FLOOR:</span>
+                    <span id="floor-count">1</span>
+                </div>
+                <div class="stat-item" id="hp-container">
+                    <span class="label">HP:</span>
+                    <div id="hp-bar-bg">
+                        <div id="hp-bar-fill"></div>
+                    </div>
+                </div>
             </div>
-            <div id="floor-count">Floors: 0</div>
-        </div>
-        <div id="game-over" class="hidden">
-            <h1>Game Over</h1>
-            <p>最終得分: <span id="final-score">0</span> 層</p>
-            <button id="restart-btn">重新開始</button>
+            <div id="game-over" class="hidden">
+                <h1>GAME OVER</h1>
+                <p>最終下降層數: <span id="final-score">0</span></p>
+                <button id="restart-btn">重新開始</button>
+            </div>
+            <div id="start-screen">
+                <h1>小朋友下樓梯</h1>
+                <p>使用左右方向鍵移動，避開釘子與敵人的子彈！</p>
+                <button id="start-btn">開始遊戲</button>
+            </div>
         </div>
     </div>
     <script src="game.js"></script>
